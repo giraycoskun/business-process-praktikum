@@ -1,69 +1,118 @@
+from collections import defaultdict, deque
+
 # ============================================================================
 # CUSTOM SIMPLICITY METRICS
 # ============================================================================
 
 
-def custom_simplicity_metric_1(petri_net):
+def compute_reachability(petri_net):
     """
-    Simplicity Metric 1: Structural Complexity Ratio
-
-    Measures the ratio of (places + transitions) to the number of arcs.
-    Lower values indicate higher complexity (more connections relative to nodes).
-
-    Formula: (|P| + |T|) / |F|
-    where P = places, T = transitions, F = arcs
+    Computes reachability for a Petri net using BFS on the bipartite graph.
+    Returns: dict[node] = set(nodes reachable from node]
     """
-    places = len(petri_net.places)
-    transitions = len(petri_net.transitions)
-    arcs = len(petri_net.arcs)
+    # Build adjacency list (graph of places + transitions)
+    adj = defaultdict(set)
 
-    if arcs == 0:
-        raise ValueError("The Petri net has no arcs; cannot compute complexity ratio.")
+    # Add arcs both ways (Petri nets are bipartite but directed)
+    for place in petri_net.places:
+        for arc in place.out_arcs:
+            adj[place].add(arc.target)
+        for arc in place.in_arcs:
+            adj[arc.source].add(place)
 
-    # Normalize to 0-1 scale (higher is simpler)
-    complexity_ratio = (places + transitions) / arcs
-    # Typical Petri nets have ratio between 0.3-0.7, normalize accordingly
-    normalized = min(1.0, complexity_ratio / 0.7)
+    for t in petri_net.transitions:
+        for arc in t.out_arcs:
+            adj[t].add(arc.target)
+        for arc in t.in_arcs:
+            adj[arc.source].add(t)
+
+    # Compute reachability via BFS for each node
+    reachability = {}
+    for node in list(petri_net.places) + list(petri_net.transitions):
+        visited = set()
+        queue = deque([node])
+
+        while queue:
+            current = queue.popleft()
+            for nxt in adj[current]:
+                if nxt not in visited:
+                    visited.add(nxt)
+                    queue.append(nxt)
+
+        reachability[node] = visited
+    
+    return reachability
+
+
+def simplicity_metric_separability(petri_net):
+    """
+    Computes the Separability simplicity metric for a Petri net.
+    Separability = (# node pairs with no path in either direction) / (total pairs)
+    """
+    nodes = list(petri_net.places) + list(petri_net.transitions)
+    n = len(nodes)
+    
+    reach = compute_reachability(petri_net)
+
+    separable_pairs = 0
+    total_pairs = n * (n - 1) / 2
+
+    # Count separable pairs
+    for i in range(n):
+        for j in range(i+1, n):
+            a, b = nodes[i], nodes[j]
+
+            # No path from a→b and no path from b→a
+            if (b not in reach[a]) and (a not in reach[b]):
+                separable_pairs += 1
+
+    metric = separable_pairs / total_pairs
+    normalized = metric  # already between 0-1
 
     return {
-        "metric_name": "Structural Complexity Ratio",
-        "raw_value": complexity_ratio,
+        "metric_name": "Separability",
+        "raw_value": metric,
         "normalized_value": normalized,
-        "places": places,
-        "transitions": transitions,
-        "arcs": arcs,
-        "interpretation": "Higher values indicate simpler structure",
+        "interpretation": "Lower values indicate simpler structure",
     }
 
 
-def custom_simplicity_metric_2(petri_net):
+def simplicity_metric_node_degree(petri_net):
     """
-    Simplicity Metric 2: Average Node Degree
+    Computes the average node degree of a Petri net:
+    (sum of all in/out arcs) / (number of nodes)
 
-    Measures the average number of connections per node (place or transition).
-    Lower average degree indicates simpler, more linear processes.
+    Parameters
+    ----------
+    net : PetriNet
+        The Petri net object from pm4py.
 
-    Formula: 2 * |F| / (|P| + |T|)
-    (Factor of 2 because each arc connects two nodes)
+    Returns
+    -------
+    float
+        The average degree of the net.
     """
-    places = len(petri_net.places)
-    transitions = len(petri_net.transitions)
-    arcs = len(petri_net.arcs)
 
-    total_nodes = places + transitions
-    if total_nodes == 0:
-        raise ValueError("The Petri net has no nodes; cannot compute average degree.")
+    # Count nodes (places + transitions)
+    places = petri_net.places
+    transitions = petri_net.transitions
+    num_nodes = len(places) + len(transitions)
 
-    # Average degree
-    avg_degree = (2 * arcs) / total_nodes
+    # Count incoming/outgoing arcs for each node
+    total_degree = 0
 
-    # Normalize (typical values range from 2-6, invert so higher = simpler)
+    for place in places:
+        total_degree += len(place.in_arcs) + len(place.out_arcs)
+
+    for t in transitions:
+        total_degree += len(t.in_arcs) + len(t.out_arcs)
+
+    avg_degree= total_degree / num_nodes
     normalized = max(0, 1 - (avg_degree - 2) / 4)
-
     return {
         "metric_name": "Average Node Degree",
         "raw_value": avg_degree,
         "normalized_value": normalized,
-        "total_nodes": total_nodes,
+        "total_nodes": num_nodes,
         "interpretation": "Lower degree (higher normalized value) indicates simpler structure",
     }
